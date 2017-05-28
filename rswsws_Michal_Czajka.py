@@ -9,6 +9,7 @@ from lxml import etree as ET
 from rdflib import Graph
 import numpy as np
 import pprint
+import json
 """
 for offers in root.iter('offers'):
     for offer in offers.iter('offer'):
@@ -21,8 +22,13 @@ def FindComplexTypes(uri):
     print(path+"\htdocs\services\sawsdl_wsdl11"+'\\' +uri)
     r=wtree.getroot()
     ns=r.nsmap
-    del ns[None]
-    ct=r.findall(".//xsd:complexType",ns)
+    ct=[]
+    if None in ns:    
+        del ns[None]
+    try:
+        ct=r.findall(".//xsd:complexType",ns)
+    except SyntaxError as err:
+        print("SynatxError error: {0}".format(err))
     return ct
 
 def printXML(elem):
@@ -31,7 +37,7 @@ def printXML(elem):
 def GetOntologyURI(complexType):     
     atr=complexType.attrib
     return atr['{'+complexType.nsmap["sawsdl"]+'}modelReference']
-
+#nie działa
 def OntologyFromURI(uri):
     splt=uri.split('/')
     last=splt[-1].split('#')
@@ -44,11 +50,12 @@ def OntologyFromURI(uri):
     for stmt in g:
         print(stmt)
         #pprint.pprint(stmt)
+#działa dzięki xlml
 def OntologyFromURIXML(uri):
     splt=uri.split('/')
     last=splt[-1].split('#')
     fileName=last[0]
-    hsh='#'+last[-1]
+    hsh=last[-1]
     ontoPath=path+"\htdocs\ontology"
     comments=[]    
     try:    
@@ -56,11 +63,35 @@ def OntologyFromURIXML(uri):
         r=t.getroot()
         ns=r.nsmap
         del ns[None]
-        comments=r.findall(".//rdfs:comment",ns)
+        print(hsh)
+        obj=r.find(".//owl:Class[@rdf:ID=\""+hsh+"\"]",ns)      
+        if obj :        
+            comments=obj.findall("./rdfs:comment",ns)
     except OSError as err:
         print("OS error: {0}".format(err))
     return comments
-
+def OntologyAsJsonFromURI(uri):
+    splt=uri.split('/')
+    last=splt[-1].split('#')
+    fileName=last[0]
+    hsh=last[-1]
+    ontoPath=path+"\htdocs\ontology"
+    #comments=[]
+    comment=""
+    try:    
+        t=ET.parse(ontoPath+"\\"+fileName)
+        r=t.getroot()
+        ns=r.nsmap
+        del ns[None]
+        #print(hsh)
+        obj=r.find(".//owl:Class[@rdf:ID=\""+hsh+"\"]",ns)
+        if obj :        
+            tc=obj.find("./rdfs:comment",ns)
+            if not tc  is None:
+                comment=tc.text
+    except OSError as err:
+        print("OS error: {0}".format(err))
+    return {'name':hsh,'comment':comment}
 def URItexts():
     tree = ET.parse(path+'\sawsdl-tc3.xml')
     root = tree.getroot()
@@ -97,26 +128,35 @@ def OffersAndRequestURIS():
     ret=[]
     reqs=LoadRequests()
     for req in reqs:
-        element=[]
         of=req.findall('./ratings/offer')
+        uri=req.findall('./uri')[0].text
         print(len(of))
-        for o in of:          
+        for o in of:
+            element=[]
             offerID=int(o.attrib['id'])-1                
             rel=int(o.findall('./relevant')[0].text)
             if offerID<len(ofUris):
                 ofText=ofUris[offerID]
-                uri=req.findall('./uri')[0].text
                 element.append(ofText)
                 element.append(uri)
                 element.append(rel)
                 ret.append(element)
     return ret
 def OffersAndRequestURISToFile(outPath):
-    data=OffersAndRequestURIS()   
+    data=OffersAndRequestURIS()
     F = open(outPath,'w')
     F.write("\"requests\":[\n")
+    i=0
     for row in data:
-        F.write("{\"offerURI\":\""+row[0]+"\",\"requestURI\":\""+row[1]+"\",\"relvance\":"+str(row[2])+"},\n")
+        print(i)
+        complexTypes=FindComplexTypes(row[0])
+        print(len(complexTypes))
+        comments=[]
+        for ct in complexTypes:
+            comments.append(OntologyAsJsonFromURI(GetOntologyURI(ct)))
+        #print(comments)
+        F.write("{\"offerURI\":\""+row[0]+"\",\"requestURI\":\""+row[1]+"\",\"relvance\":"+str(row[2])+json.dumps({'comments':comments})+"},")
+        i=i+1
     F.write("]")   
 #tworzy tablicę numpy z requests na offers z binarną oceną relewancji
 def CreateTable(requests,offersLen):
@@ -133,16 +173,19 @@ def CreateTable(requests,offersLen):
             i=i+1
     return tab
             
-    
-"""    
+OffersAndRequestURISToFile("out.json")   
+
 uritexts=URItexts()
+
 allComplexTypes=FindComplexTypes(uritexts[0])
 for i in range(1,100):
     allComplexTypes+=(FindComplexTypes(uritexts[i]))
 allComments=OntologyFromURIXML(GetOntologyURI(allComplexTypes[0]))
 for i in range(1,len(allComplexTypes)):
-    allComments+=OntologyFromURIXML(GetOntologyURI(allComplexTypes[i]))
+    allComments.append(OntologyAsJsonFromURI(GetOntologyURI(allComplexTypes[i])))
 texts=[]
+
+"""
 for c in allComments:
     texts.append(c.text)       
 cts=FindComplexTypes(uritexts[3])
